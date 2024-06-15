@@ -18,30 +18,22 @@ struct spinlock pid_lock;
 extern void forkret(void);
 static void wakeup1(struct proc *chan);
 static void freeproc(struct proc *p);
+pagetable_t ukvminit();
+static inline uint64 r_satp();
+void  kvmfree(pagetable_t kpagetale, uint64 sz);
 
 extern char trampoline[]; // trampoline.S
 
-// initialize the proc table at boot time.
+// initialize the proc locks.
 void
-procinit(void)
+proclockinit(void)
 {
   struct proc *p;
   
   initlock(&pid_lock, "nextpid");
   for(p = proc; p < &proc[NPROC]; p++) {
       initlock(&p->lock, "proc");
-
-      // Allocate a page for the process's kernel stack.
-      // Map it high in memory, followed by an invalid
-      // guard page.
-      char *pa = kalloc();
-      if(pa == 0)
-        panic("kalloc");
-      uint64 va = KSTACK((int) (p - proc));
-      kvmmap(va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
-      p->kstack = va;
   }
-  kvminithart();
 }
 
 // Must be called with interrupts disabled,
@@ -85,6 +77,23 @@ allocpid() {
   return pid;
 }
 
+void
+pvminit(struct proc *p) {
+  // init own kernel pagetable 
+  pagetable_t pkpagetable = ukvminit();
+  p -> kpagetable = pkpagetable;
+  // Allocate a page for the process's kernel stack.
+  // Map it high in memory after trampoline, followed by an invalid
+  // guard page.
+  uint64 pa = (uint64)kalloc();
+  if(pa == 0)
+    panic("kalloc");
+  uint64 va = KSTACK(p->pid);
+  // map page kernel stack
+  mappages(pkpagetable, va, PGSIZE, pa, PTE_R | PTE_W);
+  p->kstack = va;
+}
+
 // Look in the process table for an UNUSED proc.
 // If found, initialize state required to run in the kernel,
 // and return with p->lock held.
@@ -106,6 +115,7 @@ allocproc(void)
 
 found:
   p->pid = allocpid();
+  pvminit(p);
 
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
@@ -141,6 +151,8 @@ freeproc(struct proc *p)
   p->trapframe = 0;
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
+  if(p->kpagetable)
+    kvmfree(p->kpagetable, p->sz);
   p->pagetable = 0;
   p->sz = 0;
   p->pid = 0;
@@ -229,7 +241,7 @@ userinit(void)
   p->cwd = namei("/");
 
   p->state = RUNNABLE;
-
+ 
   release(&p->lock);
 }
 
@@ -459,6 +471,8 @@ scheduler(void)
   struct proc *p;
   struct cpu *c = mycpu();
   
+  // initial pagetable was set up for kernel in main.c
+  pagetable_t kernel_pagetable = (uint64 *)r_satp();
   c->proc = 0;
   for(;;){
     // Avoid deadlock by ensuring that devices can interrupt.
@@ -468,20 +482,25 @@ scheduler(void)
     for(p = proc; p < &proc[NPROC]; p++) {
       acquire(&p->lock);
       if(p->state == RUNNABLE) {
+        w_satp(MAKE_SATP(p->kpagetable));
+        sfence_vma();
         // Switch to chosen process.  It is the process's job
         // to release its lock and then reacquire it
         // before jumping back to us.
         p->state = RUNNING;
         c->proc = p;
         swtch(&c->context, &p->context);
-
         // Process is done running for now.
         // It should have changed its p->state before coming back.
         c->proc = 0;
-
+        kernel_pagetable = p->kpagetable;
         found = 1;
       }
       release(&p->lock);
+    }
+    if (found == 0) {
+      w_satp(MAKE_SATP(kernel_pagetable));
+      sfence_vma();
     }
 #if !defined (LAB_FS)
     if(found == 0) {

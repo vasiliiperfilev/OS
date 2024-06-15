@@ -96,7 +96,6 @@ int             kill(int);
 struct cpu*     mycpu(void);
 struct cpu*     getmycpu(void);
 struct proc*    myproc();
-void            procinit(void);
 void            scheduler(void) __attribute__((noreturn));
 void            sched(void);
 void            setproc(struct proc*);
@@ -178,6 +177,7 @@ uint64          walkaddr(pagetable_t, uint64);
 int             copyout(pagetable_t, uint64, char *, uint64);
 int             copyin(pagetable_t, char *, uint64, uint64);
 int             copyinstr(pagetable_t, char *, uint64, uint64);
+void            vmprint(pagetable_t pagetable);
 
 // plic.c
 void            plicinit(void);

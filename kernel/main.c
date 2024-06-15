@@ -5,6 +5,7 @@
 #include "defs.h"
 
 volatile static int started = 0;
+void proclockinit();
 
 // start() jumps here in supervisor mode on all CPUs.
 void
@@ -22,7 +23,7 @@ main()
     kinit();         // physical page allocator
     kvminit();       // create kernel page table
     kvminithart();   // turn on paging
-    procinit();      // process table
+    proclockinit();  // process lock
     trapinit();      // trap vectors
     trapinithart();  // install kernel trap vector
     plicinit();      // set up interrupt controller
@@ -34,7 +35,7 @@ main()
 #ifdef LAB_NET
     pci_init();
     sockinit();
-#endif    
+#endif 
     userinit();      // first user process
     __sync_synchronize();
     started = 1;
