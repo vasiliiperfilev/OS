@@ -15,6 +15,7 @@ extern char trampoline[], uservec[], userret[];
 void kernelvec();
 
 extern int devintr();
+extern uint refcount[REFLENGTH];
 
 void
 trapinit(void)
@@ -67,6 +68,35 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
+  } else if(r_scause() == 15) {
+    uint64 va = PGROUNDDOWN(r_stval());
+    if (va >= MAXVA) { 
+      kill(p -> pid);
+    }
+
+    pte_t *pte = walk(p->pagetable, va, 0);
+    if (pte == 0) {
+      kill(p -> pid);
+    }
+
+    if ((*pte & PTE_U) == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_COW) == 0){
+      kill(p -> pid);
+    }
+
+    uint64 pa = PTE2PA(*pte);
+    uint flags = PTE_FLAGS(*pte);
+
+    char *mem;
+    if((mem = kalloc()) == 0) {
+      kill(p -> pid);
+    }
+    memmove(mem, (char*)pa, PGSIZE);
+    if(mappages(p->pagetable, va, PGSIZE, (uint64)mem, flags | PTE_W) != 0){
+      kfree(mem);
+      panic("usertrap:mappages");
+    }
+    // decrease ref count after splitting
+    drefcount(pa);
   } else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
@@ -144,6 +174,12 @@ kerneltrap()
     panic("kerneltrap: interrupts enabled");
 
   if((which_dev = devintr()) == 0){
+    for (uint64 i = 0; i < REFLENGTH; i++) {
+      if(refcount[i] > 0) {
+        printf("refcount %d %x \n", i, refcount[i]);
+      }
+    }
+
     printf("scause %p\n", scause);
     printf("sepc=%p stval=%p\n", r_sepc(), r_stval());
     panic("kerneltrap");

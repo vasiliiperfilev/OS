@@ -14,6 +14,8 @@ void freerange(void *pa_start, void *pa_end);
 extern char end[]; // first address after kernel.
                    // defined by kernel.ld.
 
+extern uint refcount[REFLENGTH];
+
 struct run {
   struct run *next;
 };
@@ -27,6 +29,9 @@ void
 kinit()
 {
   initlock(&kmem.lock, "kmem");
+  for (uint64 i = 0; i < REFLENGTH; i++) {
+    refcount[i] = 0;
+  }
   freerange(end, (void*)PHYSTOP);
 }
 
@@ -46,20 +51,10 @@ freerange(void *pa_start, void *pa_end)
 void
 kfree(void *pa)
 {
-  struct run *r;
-
   if(((uint64)pa % PGSIZE) != 0 || (char*)pa < end || (uint64)pa >= PHYSTOP)
     panic("kfree");
-
-  // Fill with junk to catch dangling refs.
-  memset(pa, 1, PGSIZE);
-
-  r = (struct run*)pa;
-
-  acquire(&kmem.lock);
-  r->next = kmem.freelist;
-  kmem.freelist = r;
-  release(&kmem.lock);
+  
+  drefcount((uint64)pa);
 }
 
 // Allocate one 4096-byte page of physical memory.
@@ -74,9 +69,40 @@ kalloc(void)
   r = kmem.freelist;
   if(r)
     kmem.freelist = r->next;
+
+  if(r) {
+    memset((char*)r, 5, PGSIZE); // fill with junk
+    refcount[PGREFADRESS((uint64)r)] = 1;
+  }
   release(&kmem.lock);
 
-  if(r)
-    memset((char*)r, 5, PGSIZE); // fill with junk
+
   return (void*)r;
+}
+
+void
+arefcount(uint64 pa) {
+  acquire(&kmem.lock);
+  refcount[PGREFADRESS((uint64)pa)] += 1;
+  release(&kmem.lock);
+}
+
+void
+drefcount(uint64 pa) {
+  struct run *r;
+  
+  acquire(&kmem.lock);
+  if (refcount[PGREFADRESS((uint64)pa)] > 1) {
+    refcount[PGREFADRESS((uint64)pa)] -= 1;
+  } else {
+    // Fill with junk to catch dangling refs.
+    memset((void *)pa, 1, PGSIZE);
+
+    r = (struct run*)pa;
+
+    r->next = kmem.freelist;
+    kmem.freelist = r;
+    refcount[PGREFADRESS((uint64)pa)] = 0;
+  }
+   release(&kmem.lock);
 }
