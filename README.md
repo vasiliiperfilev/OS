@@ -1,5 +1,6 @@
 # OS
 ## OS course from MIT 6.S081
+[Link to the course](https://pdos.csail.mit.edu/6.828/2020/schedule.html)
 
 ### List of Labs solutions:
 1. [Copy-on-write implementation](https://github.com/vasiliiperfilev/OS/commit/8c6be32b7a1fa94092e8049a2fe5f4dfca372174)
